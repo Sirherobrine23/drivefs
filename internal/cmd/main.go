@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path/filepath"
+	"time"
 
 	"golang.org/x/oauth2"
 	"google.golang.org/api/drive/v3"
@@ -82,6 +84,7 @@ func main() {
 	}
 
 	http.ListenAndServe(":8081", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		head := w.Header()
 		s, err := ggdrive.Open(r.URL.Path)
 		if err != nil {
 			w.WriteHeader(400)
@@ -101,12 +104,23 @@ func main() {
 				w.Write([]byte(err.Error()))
 				return
 			}
-			w.Header().Set("Content-Type", "application/json")
+			head.Set("Content-Type", "application/json")
 			w.WriteHeader(200)
 			at := json.NewEncoder(w)
 			at.SetIndent("", "  ")
 			at.Encode(files)
 			return
+		}
+		head.Set("date", sta.ModTime().Format(time.RFC1123))
+		head.Set("Content-Length", fmt.Sprint(sta.Size()))
+		head.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", sta.Name()))
+		switch filepath.Ext(sta.Name()) {
+		case "mp3", ".mp3":
+			head.Set("Content-Disposition", "inline")
+			head.Set("Content-Type", "audio/mpeg")
+		case "txt", ".txt":
+			head.Set("Content-Disposition", "inline")
+			head.Set("Content-Type", "text/plain")
 		}
 		w.WriteHeader(200)
 		io.Copy(w, s)

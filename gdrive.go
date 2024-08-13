@@ -16,11 +16,6 @@ import (
 
 var ErrGoogletoken = errors.New("require oauth2.Token in struct")
 
-const (
-	MimeFolder  string = "application/vnd.google-apps.folder"   // Folder mimetype
-	MimeSyslink string = "application/vnd.google-apps.shortcut" // Syslink/hardlink
-)
-
 type GoogleApp struct {
 	Client    string   `json:"client_id"`
 	Secret    string   `json:"client_secret"`
@@ -32,12 +27,13 @@ type GoogleApp struct {
 }
 
 type Gdrive struct {
-	GoogleOAuth GoogleApp    `json:"installed"`
+	GoogleOAuth GoogleApp     `json:"installed"`
 	GoogleToken *oauth2.Token `json:"token,omitempty"`
 
 	gDrive *drive.Service
 
-	rootDrive *drive.File // My drive folder id
+	rootDrive  *drive.File // My drive folder id
+	cacheFiles map[string][]*drive.File
 }
 
 func maping[A any, B any](input []A, fn func(imput A) B) []B {
@@ -64,13 +60,14 @@ func New(app GoogleApp, gToken oauth2.Token) (*Gdrive, error) {
 		return nil, fmt.Errorf("cannot get root (my drive) id: %v", err)
 	}
 
+	gdrive.cacheFiles = make(map[string][]*drive.File)
 	return gdrive, nil
 }
 
 // Get all files in folder including folders
 func (gdrive *Gdrive) listFiles(folderID string) ([]*drive.File, error) {
 	var files = make([]*drive.File, 0)
-	list := gdrive.gDrive.Files.List().Q(fmt.Sprintf("'%s' in parents", folderID)).PageSize(1000)
+	list := gdrive.gDrive.Files.List().Fields("*").Q(fmt.Sprintf("'%s' in parents", folderID)).PageSize(1000)
 	for {
 		res, err := list.Do()
 		if err != nil {
@@ -97,7 +94,7 @@ func (gdrive *Gdrive) resolvePath(fpath string) (*drive.File, error) {
 	}
 	if gdrive.rootDrive == nil {
 		var err error
-		if gdrive.rootDrive, err = gdrive.gDrive.Files.Get("root").Do(); err != nil {
+		if gdrive.rootDrive, err = gdrive.gDrive.Files.Get("root").Fields("*").Do(); err != nil {
 			return nil, err
 		}
 	}
@@ -109,11 +106,21 @@ func (gdrive *Gdrive) resolvePath(fpath string) (*drive.File, error) {
 			continue
 		}
 
-		// List files
-		files, err := gdrive.listFiles(current.Id)
-		if err != nil {
-			return nil, err
+		if gdrive.cacheFiles == nil {
+			gdrive.cacheFiles = make(map[string][]*drive.File)
 		}
+
+		var ok bool
+		var files []*drive.File
+		if files, ok = gdrive.cacheFiles[current.Id]; !ok {
+			// List files
+			var err error
+			if files, err = gdrive.listFiles(current.Id); err != nil {
+				return nil, err
+			}
+			gdrive.cacheFiles[current.Id] = files
+		}
+
 
 		// Check to current folder exists node path
 		if !slices.Contains(maping(files, func(a *drive.File) string { return a.Name }), spaths[spathIndex]) {
@@ -123,7 +130,7 @@ func (gdrive *Gdrive) resolvePath(fpath string) (*drive.File, error) {
 		for _, gfile := range files {
 			if gfile.Name == spaths[spathIndex] {
 				previus = current // Setting old node
-				current = gfile // replace to new node
+				current = gfile   // replace to new node
 				break
 			}
 		}
@@ -156,7 +163,7 @@ func (gdrive *Gdrive) ReadDir(fpath string) ([]fs.DirEntry, error) {
 
 	var entrys []fs.DirEntry
 	for _, file := range files {
-		entrys = append(entrys, (&FileNode{file}).FsInfoDir(gdrive.gDrive))
+		entrys = append(entrys, fsInfoDir(file))
 	}
 	return entrys, nil
 }
@@ -166,5 +173,5 @@ func (gdrive *Gdrive) Open(fpath string) (fs.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return (&FileNode{file}).FsInfo(gdrive.gDrive), nil
+	return fsInfo(file, gdrive.gDrive), nil
 }
