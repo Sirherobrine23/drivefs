@@ -3,23 +3,28 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/netip"
 	"os"
-	"path/filepath"
-	"time"
 
 	"golang.org/x/oauth2"
 	"google.golang.org/api/drive/v3"
 	"sirherobrine23.org/Sirherobrine23/drivefs"
 )
 
+var configPath string
+var serverPort uint
+
 func main() {
+	flag.StringVar(&configPath, "config", "./config.json", "Config file path")
+	flag.UintVar(&serverPort, "port", 8081, "server to listen")
+	flag.Parse()
+
 	var ggdrive *drivefs.Gdrive = new(drivefs.Gdrive)
-	file, err := os.Open("./config.json")
+	file, err := os.Open(configPath)
 	if err != nil {
 		panic(err)
 	}
@@ -72,7 +77,7 @@ func main() {
 		}
 
 		file.Close()
-		if file, err = os.Create("./config.json"); err != nil {
+		if file, err = os.Create(configPath); err != nil {
 			panic(err)
 		}
 
@@ -83,46 +88,9 @@ func main() {
 		}
 	}
 
-	http.ListenAndServe(":8081", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		head := w.Header()
-		s, err := ggdrive.Open(r.URL.Path)
-		if err != nil {
-			w.WriteHeader(400)
-			w.Write([]byte(err.Error()))
-			return
-		}
-		defer s.Close()
-		sta, err := s.Stat()
-		if err != nil {
-			w.WriteHeader(400)
-			w.Write([]byte(err.Error()))
-			return
-		} else if sta.IsDir() {
-			files, err := ggdrive.ReadDir(r.URL.Path)
-			if err != nil {
-				w.WriteHeader(400)
-				w.Write([]byte(err.Error()))
-				return
-			}
-			head.Set("Content-Type", "application/json")
-			w.WriteHeader(200)
-			at := json.NewEncoder(w)
-			at.SetIndent("", "  ")
-			at.Encode(files)
-			return
-		}
-		head.Set("date", sta.ModTime().Format(time.RFC1123))
-		head.Set("Content-Length", fmt.Sprint(sta.Size()))
-		head.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", sta.Name()))
-		switch filepath.Ext(sta.Name()) {
-		case "mp3", ".mp3":
-			head.Set("Content-Disposition", "inline")
-			head.Set("Content-Type", "audio/mpeg")
-		case "txt", ".txt":
-			head.Set("Content-Disposition", "inline")
-			head.Set("Content-Type", "text/plain")
-		}
-		w.WriteHeader(200)
-		io.Copy(w, s)
-	}))
+	fmt.Printf("server listening on :%d\n", serverPort)
+	if err := http.ListenAndServe(fmt.Sprintf(":%d", serverPort), http.FileServerFS(ggdrive)); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
 }
