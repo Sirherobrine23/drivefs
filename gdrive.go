@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
+	"time"
+
+	"sirherobrine23.com.br/Sirherobrine23/drivefs/cache"
 
 	"golang.org/x/oauth2"
 	"google.golang.org/api/drive/v3"
@@ -34,9 +36,8 @@ type Gdrive struct {
 
 	gDrive *drive.Service
 
-	rootDrive    *drive.File              // My drive folder id (use "root" alias to locate)
-	cachrRW      sync.RWMutex             // cacheFolders Locker
-	cacheFolders map[string][]*drive.File // Cache folders
+	rootDrive    *drive.File                // My drive folder id (use "root" alias to locate)
+	cacheFolders *cache.LocalCache[[]*drive.File] // Cache folders
 }
 
 func maping[A any, B any](input []A, fn func(imput A) B) []B {
@@ -63,7 +64,7 @@ func New(app GoogleApp, gToken oauth2.Token) (*Gdrive, error) {
 		return nil, fmt.Errorf("cannot get root (my drive) id: %v", err)
 	}
 
-	gdrive.cacheFolders = make(map[string][]*drive.File)
+	gdrive.cacheFolders = cache.NewCacheMap[[]*drive.File]()
 	return gdrive, nil
 }
 
@@ -109,25 +110,14 @@ func (gdrive *Gdrive) resolvePath(fpath string) (*drive.File, error) {
 			continue
 		}
 
-		if gdrive.cacheFolders == nil {
-			gdrive.cachrRW.Lock()
-			gdrive.cacheFolders = make(map[string][]*drive.File)
-			gdrive.cachrRW.Unlock()
-		}
-
-		gdrive.cachrRW.RLock()
-		files, ok := gdrive.cacheFolders[current.Id]
-		gdrive.cachrRW.RUnlock()
+		files, ok := gdrive.cacheFolders.Get(current.Id)
 		if !ok {
 			// List files
 			var err error
 			if files, err = gdrive.listFiles(current.Id); err != nil {
 				return nil, err
 			}
-
-			gdrive.cachrRW.Lock()
-			gdrive.cacheFolders[current.Id] = files
-			gdrive.cachrRW.Unlock()
+			gdrive.cacheFolders.Set(time.Now().Add(time.Second*30), current.Id, files)
 		}
 
 		// Check to current folder exists node path
@@ -163,8 +153,11 @@ func (gdrive *Gdrive) ReadDir(fpath string) ([]fs.DirEntry, error) {
 	} else if folder == nil {
 		return nil, fmt.Errorf("cannot get folder")
 	}
+	return gdrive.nReadDir(folder.Id)
+}
 
-	files, err := gdrive.listFiles(folder.Id)
+func (gdrive *Gdrive) nReadDir(folderID string) ([]fs.DirEntry, error) {
+	files, err := gdrive.listFiles(folderID)
 	if err != nil {
 		return nil, err
 	}

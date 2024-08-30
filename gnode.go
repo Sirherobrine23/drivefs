@@ -49,46 +49,43 @@ type DriveOpen struct {
 	driveFile   *drive.File
 	driveClient *Gdrive
 
-	driveRead     *http.Response
+	driveRead *http.Response
+	offset    int64 // current read offset
+
 	entrysEnabled bool
 	entrys        []fs.DirEntry
+	entrysN       int
 }
 
 func fsInfo(driveFile *drive.File, driveClient *Gdrive) fs.File {
-	return &DriveOpen{driveFile, driveClient, nil, false, nil}
+	return &DriveOpen{driveFile, driveClient, nil, 0, false, nil, 0}
 }
 
 func (file DriveOpen) Stat() (fs.FileInfo, error) { return fsStat(file.driveFile) }
 
-func (file *DriveOpen) ReadDir(n int) ([]fs.DirEntry, error) {
+func (file *DriveOpen) ReadDir(n int) (_ []fs.DirEntry, err error) {
+	if file.driveFile.MimeType != MimeFolder {
+		return nil, fs.ErrInvalid
+	} else if n <= 0 {
+		file.entrysEnabled = true
+		return file.driveClient.nReadDir(file.driveFile.Id)
+	}
+
 	if !file.entrysEnabled {
-		enr, err := file.driveClient.listFiles(file.driveFile.Id)
-		if err != nil {
+		file.entrysEnabled = true
+		if file.entrys, err = file.driveClient.nReadDir(file.driveFile.Id); err != nil {
 			return nil, err
 		}
-		for _, gfile := range enr {
-			fsStatt, err := fsStat(gfile)
-			if err != nil {
-				return nil, err
-			}
-			file.entrys = append(file.entrys, fs.FileInfoToDirEntry(fsStatt))
-		}
 	}
 
-	if len(file.entrys) == 0 {
-		return nil, io.EOF
-	} else if n <= 0 {
-		var def = file.entrys[:]
-		file.entrys = []fs.DirEntry{}
-		return def, nil
+	if len(file.entrys) >= file.entrysN {
+		file.entrysEnabled = false
+		return []fs.DirEntry{}, io.EOF
+	} else if len(file.entrys)-file.entrysN > 0 && len(file.entrys)-file.entrysN < n {
 	}
 
-	if len(file.entrys) <= n {
-		n = len(file.entrys) - 1
-	}
-	var def = file.entrys[:n]
-	file.entrys = file.entrys[n:]
-	return def, nil
+	defer func() { file.entrysN += n }()
+	return file.entrys[file.entrysN:n], nil
 }
 
 func (file *DriveOpen) Close() error {
@@ -105,5 +102,34 @@ func (file *DriveOpen) Read(p []byte) (int, error) {
 			return 0, err
 		}
 	}
+	file.offset += int64(len(p))
 	return file.driveRead.Body.Read(p)
+}
+
+func (file *DriveOpen) Seek(offset int64, whence int) (int64, error) {
+	if file.driveRead != nil {
+		switch whence {
+		case 0:
+			file.driveRead.Body.Close()
+			var err error
+			if file.driveRead, err = file.driveClient.gDrive.Files.Get(file.driveFile.Id).Download(); err != nil {
+				return 0, err
+			} else if n, err := io.CopyN(io.Discard, file.driveRead.Body, offset); err != nil {
+				return n, err
+			}
+		case 1:
+			if n, err := io.CopyN(io.Discard, file.driveRead.Body, offset); err != nil {
+				return n, err
+			}
+			offset += file.offset
+		case 2:
+			offset += file.driveFile.Size
+		}
+		if offset < 0 || offset > file.driveFile.Size {
+			return 0, &fs.PathError{Op: "seek", Path: file.driveFile.Id, Err: fs.ErrInvalid}
+		}
+		file.offset = offset
+		return offset, nil
+	}
+	return 0, &fs.PathError{Op: "seek", Path: file.driveFile.Id, Err: fs.ErrInvalid}
 }

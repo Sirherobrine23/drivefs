@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/oauth2"
 	"google.golang.org/api/drive/v3"
-	"sirherobrine23.org/Sirherobrine23/drivefs"
+	"sirherobrine23.com.br/Sirherobrine23/drivefs"
 )
 
 var configPath string
@@ -57,11 +57,12 @@ func main() {
 		mux := http.NewServeMux()
 		mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
-			w.WriteHeader(200)
 			w.Write([]byte("Doned\n"))
 			code = r.URL.Query().Get("code")
 			if code != "" {
 				fmt.Printf("Code: %q\n", code)
+				w.Write([]byte(fmt.Sprintf("Code: %q\n", code)))
+				w.Write(nil)
 				server.Close()
 			}
 		})
@@ -84,6 +85,8 @@ func main() {
 		at := json.NewEncoder(file)
 		at.SetIndent("", "  ")
 		if err := at.Encode(ggdrive); err != nil {
+			panic(err)
+		} else if ggdrive, err = drivefs.New(ggdrive.GoogleOAuth, *ggdrive.GoogleToken); err != nil {
 			panic(err)
 		}
 	}
