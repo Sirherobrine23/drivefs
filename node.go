@@ -46,7 +46,7 @@ func (open *Open) Read(p []byte) (int, error) {
 
 		// Start open request
 		var err error
-		if open.nodeRes, err = open.client.GetRequest(node); err != nil {
+		if open.nodeRes, err = open.client.getRequest(node); err != nil {
 			return 0, err
 		}
 	}
@@ -74,7 +74,7 @@ func (open *Open) Seek(offset int64, whence int) (int64, error) {
 		node := open.client.driveService.Files.Get(open.node.Id).AcknowledgeAbuse(true)
 		node.Header().Set("Range", fmt.Sprintf("bytes=%d-%d", offset, open.node.Size-1))
 		var err error
-		if open.nodeRes, err = open.client.GetRequest(node); err != nil {
+		if open.nodeRes, err = open.client.getRequest(node); err != nil {
 			return 0, err
 		}
 		open.offset = offset
@@ -95,7 +95,7 @@ func (open *Open) Seek(offset int64, whence int) (int64, error) {
 		node := open.client.driveService.Files.Get(open.node.Id).AcknowledgeAbuse(true)
 		node.Header().Set("Range", fmt.Sprintf("bytes=%d-%d", newOffset, open.node.Size-1))
 		var err error
-		if open.nodeRes, err = open.client.GetRequest(node); err != nil {
+		if open.nodeRes, err = open.client.getRequest(node); err != nil {
 			return 0, err
 		}
 		open.offset = newOffset
@@ -107,7 +107,7 @@ func (open *Open) Seek(offset int64, whence int) (int64, error) {
 }
 
 // Get file stream, if error check if is http2 error to make new request
-func (gdrive *Gdrive) GetRequest(node *drive.FilesGetCall) (*http.Response, error) {
+func (gdrive *Gdrive) getRequest(node *drive.FilesGetCall) (*http.Response, error) {
 	res, err := node.Download()
 	for i := 0; i < 10 && err != nil; i++ {
 		if urlError, ok := err.(*url.Error); ok {
@@ -132,7 +132,7 @@ func (gdrive *Gdrive) Open(path string) (fs.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	boot, err := gdrive.GetRequest(gdrive.driveService.Files.Get(fileNode.Id).AcknowledgeAbuse(true))
+	boot, err := gdrive.getRequest(gdrive.driveService.Files.Get(fileNode.Id).AcknowledgeAbuse(true))
 	if err != nil {
 		return nil, err
 	}
