@@ -16,14 +16,12 @@ type LocalCache[T any] struct {
 	rw sync.Mutex
 }
 
-func NewCacheMap[T any]() *LocalCache[T] {
-	return &LocalCache[T]{
-		l: make(map[string]*cacheInfo[T]),
-	}
-}
-
 // Get value from Key
 func (w *LocalCache[T]) Get(Key string) (T, bool) {
+	if len(w.l) == 0 {
+		return *new(T), false
+	}
+
 	w.rw.Lock()
 	defer w.rw.Unlock()
 	data, ok := w.l[Key]
@@ -41,18 +39,31 @@ func (w *LocalCache[T]) Get(Key string) (T, bool) {
 func (w *LocalCache[T]) Set(ValidAt time.Time, Key string, Value T) {
 	w.rw.Lock()
 	defer w.rw.Unlock()
+	if len(w.l) == 0 {
+		w.l = make(map[string]*cacheInfo[T])
+	}
+
 	w.l[Key] = &cacheInfo[T]{
 		TimeValid: ValidAt,
 		Data:      Value,
 	}
 }
 
-func (w *LocalCache[T]) Flush() int64 {
+// Delete key if exists
+func (w *LocalCache[T]) Delete(Key string) {
 	w.rw.Lock()
 	defer w.rw.Unlock()
-	var flushed int64 = 0
+	delete(w.l, Key)
+}
+
+// Remove expired Cache
+func (w *LocalCache[T]) Flush() int {
+	w.rw.Lock()
+	defer w.rw.Unlock()
+
+	flushed, now := 0, time.Now().Unix()
 	for key, data := range w.l {
-		if data.TimeValid.Unix() >= time.Now().Unix() {
+		if data.TimeValid.Unix() >= now {
 			delete(w.l, key)
 			flushed++
 		}
