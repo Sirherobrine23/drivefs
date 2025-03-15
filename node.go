@@ -132,6 +132,7 @@ func (gdrive *Gdrive) Open(path string) (fs.File, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	boot, err := gdrive.getRequest(gdrive.driveService.Files.Get(fileNode.Id).AcknowledgeAbuse(true))
 	if err != nil {
 		return nil, err

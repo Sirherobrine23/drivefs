@@ -45,6 +45,14 @@ func (gdrive *Gdrive) Stat(path string) (fs.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Loop to check if is shortcut
+	for limit := 200_000; limit > 0 && fileNode.MimeType == GoogleDriveMimeSyslink; limit-- {
+		if fileNode, err = gdrive.driveService.Files.Get(fileNode.ShortcutDetails.TargetId).Do(); err != nil {
+			return nil, err
+		}
+	}
+
 	return &Stat{fileNode}, nil
 }
 

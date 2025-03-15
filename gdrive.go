@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,27 +42,27 @@ type Fs interface {
 }
 
 type Gdrive struct {
-	GoogleConfig *oauth2.Config // Google client app oauth project
-	GoogleToken  *oauth2.Token  // Authenticated user
-	driveService *drive.Service // Google drive service
-	rootDrive    *drive.File    // Root to find files
+	GoogleConfig *oauth2.Config `json:"client"` // Google client app oauth project
+	GoogleToken  *oauth2.Token  `json:"token"`  // Authenticated user
 
-	cache *cache.LocalCache[*drive.File]
+	driveService *drive.Service                 // Google drive service
+	rootDrive    *drive.File                    // Root to find files
+	cache        *cache.LocalCache[*drive.File] // Cache struct
 }
 
 // GoogleOauthConfig represents google oauth token for drive setup
 type GoogleOauthConfig struct {
-	Client       string    `json:",omitempty"`
-	Secret       string    `json:",omitempty"`
-	Project      string    `json:",omitempty"`
-	AuthURI      string    `json:",omitempty"`
-	TokenURI     string    `json:",omitempty"`
-	Redirect     string    `json:",omitempty"`
-	AccessToken  string    `json:",omitempty"`
-	RefreshToken string    `json:",omitempty"`
-	Expire       time.Time `json:",omitempty"`
-	TokenType    string    `json:",omitempty"`
-	RootFolder   string    `json:",omitempty"` // Google drive folder id (gdrive:<ID>) or path to folder
+	Client       string    `json:"client,omitempty"`        // installed.client_id
+	Secret       string    `json:"secret,omitempty"`        // installed.client_secret
+	Project      string    `json:"project,omitempty"`       // installed.project_id
+	AuthURI      string    `json:"auth_uri,omitempty"`      // installed.auth_uri
+	TokenURI     string    `json:"token_uri,omitempty"`     // installed.token_uri
+	Redirect     string    `json:"redirect,omitempty"`      // installed.redirect_uris[]
+	AccessToken  string    `json:"access_token,omitempty"`  // token.access_token
+	RefreshToken string    `json:"refresh_token,omitempty"` // token.refresh_token
+	Expire       time.Time `json:"expire,omitzero"`         // token.expiry
+	TokenType    string    `json:"token_type,omitempty"`    // token.token_type
+	RootFolder   string    `json:"root_folder,omitempty"`   // Google drive folder id (gdrive:<ID>) or path to folder
 }
 
 // Create new Gdrive struct and configure google drive client
@@ -208,6 +210,32 @@ func (gdrive *Gdrive) getLast(path string) struct{ Name, Path string } {
 	return n[len(n)-1]
 }
 
+func (gdrive *Gdrive) forwardPathResove(nodeID string) (string, error) {
+	pathNodes, currentNode, err := []string{}, (*drive.File)(nil), error(nil)
+
+resolveNode:
+	for {
+		if currentNode, err = gdrive.driveService.Files.Get(nodeID).Do(); err != nil {
+			return "", err
+		}
+
+		switch len(currentNode.Parents) {
+		case 0:
+			break resolveNode
+		case 1:
+			if currentNode.Parents[0] == gdrive.rootDrive.Id {
+				break resolveNode
+			}
+			nodeID = currentNode.Parents[0]
+		default:
+			panic("cannot process this folder")
+		}
+	}
+
+	slices.Reverse(pathNodes)
+	return path.Join(pathNodes...), err
+}
+
 // Get *drive.File if exist
 func (gdrive *Gdrive) getNode(path string) (*drive.File, error) {
 	var current *drive.File
@@ -259,4 +287,28 @@ func (gdrive *Gdrive) Save(path string, r io.Reader) (int64, error) {
 	}
 	gdrive.cachePut(n[len(n)-1].Path, rootSolver)
 	return rootSolver.Size, nil
+}
+
+func (gdrive *Gdrive) ReadLink(name string) (string, error) {
+	fileNode, err := gdrive.getNode(name)
+	if err != nil {
+		return "", err
+	}
+
+	// Loop to check if is shortcut
+	for limit := 200_000; limit > 0 && fileNode.MimeType == GoogleDriveMimeSyslink; limit-- {
+		if fileNode, err = gdrive.driveService.Files.Get(fileNode.ShortcutDetails.TargetId).Do(); err != nil {
+			return "", err
+		}
+	}
+
+	return gdrive.forwardPathResove(fileNode.Id)
+}
+
+func (gdrive *Gdrive) Lstat(name string) (fs.FileInfo, error) {
+	fileNode, err := gdrive.getNode(name)
+	if err != nil {
+		return nil, err
+	}
+	return &Stat{fileNode}, nil
 }
