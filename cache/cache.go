@@ -1,72 +1,65 @@
 package cache
 
 import (
-	"sync"
+	"encoding"
+	"encoding/json"
+	"errors"
+	"iter"
 	"time"
 )
 
-type cacheInfo[D any] struct {
-	TimeValid time.Time // Valid time
-	Data      D         // Data
+var (
+	ErrNotExist error = errors.New("key not exists")
+)
+
+// Generic Cache interface
+type Cache[T any] interface {
+	Delete(key string) error                          // Remove value from cache
+	Set(ttl time.Duration, key string, value T) error // set new value or replace current value
+	Get(key string) (T, error)                        // Get current value
+	Values() iter.Seq2[string, T]                     // List all keys with u values
+	Flush() error                                     // Remove all outdated values
 }
 
-type LocalCache[T any] struct {
-	l map[string]*cacheInfo[T]
-
-	rw sync.Mutex
-}
-
-// Get value from Key
-func (w *LocalCache[T]) Get(Key string) (T, bool) {
-	if len(w.l) == 0 {
-		return *new(T), false
-	}
-
-	w.rw.Lock()
-	defer w.rw.Unlock()
-	data, ok := w.l[Key]
-	if ok {
-		if data.TimeValid.Unix() >= time.Now().Unix() {
-			delete(w.l, Key)
-			return *new(T), false
+func ToString(v any) (string, error) {
+	switch v := v.(type) {
+	case encoding.TextMarshaler:
+		data, err := v.MarshalText()
+		if err != nil {
+			return "", err
 		}
-		return data.Data, true
-	}
-	return *new(T), false
-}
-
-// Set value to cache struct
-func (w *LocalCache[T]) Set(ValidAt time.Time, Key string, Value T) {
-	w.rw.Lock()
-	defer w.rw.Unlock()
-	if len(w.l) == 0 {
-		w.l = make(map[string]*cacheInfo[T])
-	}
-
-	w.l[Key] = &cacheInfo[T]{
-		TimeValid: ValidAt,
-		Data:      Value,
-	}
-}
-
-// Delete key if exists
-func (w *LocalCache[T]) Delete(Key string) {
-	w.rw.Lock()
-	defer w.rw.Unlock()
-	delete(w.l, Key)
-}
-
-// Remove expired Cache
-func (w *LocalCache[T]) Flush() int {
-	w.rw.Lock()
-	defer w.rw.Unlock()
-
-	flushed, now := 0, time.Now().Unix()
-	for key, data := range w.l {
-		if data.TimeValid.Unix() >= now {
-			delete(w.l, key)
-			flushed++
+		return string(data), nil
+	case encoding.BinaryMarshaler:
+		data, err := v.MarshalBinary()
+		if err != nil {
+			return "", err
 		}
+		return string(data), nil
+	case json.Marshaler:
+		data, err := v.MarshalJSON()
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
 	}
-	return flushed
+}
+
+func FromString[T any](value string) (target T, err error) {
+	switch v := any(target).(type) {
+	case encoding.TextUnmarshaler:
+		err = v.UnmarshalText([]byte(value))
+	case encoding.BinaryUnmarshaler:
+		err = v.UnmarshalBinary([]byte(value))
+	case json.Unmarshaler:
+		err = v.UnmarshalJSON([]byte(value))
+	default:
+		err = json.Unmarshal([]byte(value), &value)
+	}
+	return
 }

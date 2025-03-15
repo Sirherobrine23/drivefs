@@ -1,14 +1,3 @@
-# drivefs
-
-Implements google drive to [fs.FS](https://pkg.go.dev/io/fs)
-
-## Path resolve
-
-Google drive does not implement the file system in the unix filepath format, so we have to resolve this path, this can become costly for the API, we have to make a call for each separator (N+MS+1), so this will end up becoming slow to resolve (This path being `/Frog/Google/files`, it would be the same as 3 + 0.5ms + 1, total of 2.5ms), for this we have a cache of files in the folder that reduces this time but leaves it undone with the time
-
-## Example
-
-```go
 package main
 
 import (
@@ -152,4 +141,3 @@ func main() {
 	}
 
 }
-```
