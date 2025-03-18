@@ -8,21 +8,16 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
-	"strings"
 	"time"
 
 	"google.golang.org/api/drive/v3"
 )
 
-func escapeName(n string) string {
-	return strings.Join(strings.Split(n, "/"), "%%2f")
-}
-
 // Extends [*google.golang.org/api/drive/v3.File]
 type Stat struct{ File *drive.File }
 
 func (node Stat) Sys() any     { return node.File }
-func (node Stat) Name() string { return escapeName(path.Clean(node.File.Name)) }
+func (node Stat) Name() string { return pathManipulate(path.Clean(node.File.Name)).EscapeName() }
 func (node Stat) Size() int64  { return node.File.Size }
 func (node Stat) IsDir() bool  { return node.File.MimeType == GoogleDriveMimeFolder }
 func (node Stat) Mode() fs.FileMode {
@@ -49,17 +44,17 @@ func (node Stat) ModTime() time.Time {
 }
 
 var (
+	_ fs.File = File(nil)
 	_ File    = (*GdriveNode)(nil)
-	_ fs.File = (File)(nil)
 
 	ErrInvalidOffset error = errors.New("Seek: invalid offset")
 )
 
 type File interface {
-	io.ReadWriteCloser
+	fs.File
+	io.Writer
 	io.ReaderFrom
 	io.WriterTo
-	Stat() (fs.FileInfo, error)
 	ReadDir(count int) ([]fs.DirEntry, error)
 }
 
@@ -85,6 +80,7 @@ func (err ErrInvalidDirection) Error() string {
 	return "unknown direction"
 }
 
+// Struct with file or directory info
 type GdriveNode struct {
 	filename  string         // Filename path
 	gClient   *Gdrive        // Client setuped
@@ -113,7 +109,7 @@ func (node *GdriveNode) ReadFrom(r io.Reader) (n int64, err error) {
 	if len(node.nodeFiles) > 0 || node.filesOffset > 0 {
 		return 0, &fs.PathError{Op: "readfrom", Path: node.filename, Err: fs.ErrInvalid}
 	}
-	pathNodes := node.gClient.pathSplit(node.filename)
+	pathNodes := pathManipulate(node.filename).SplitPath()
 	if !(node.direction == DirectionWrite || node.direction == DirectionWait) {
 		return 0, fs.ErrInvalid
 	}
@@ -125,18 +121,18 @@ func (node *GdriveNode) ReadFrom(r io.Reader) (n int64, err error) {
 
 	rootSolver := node.gClient.rootDrive
 	if node.node == nil && node.nodeRoot == nil {
-		if node.gClient.checkMkdir(node.filename) {
-			if rootSolver, err = node.gClient.mkdirAllNodes(pathNodes[len(pathNodes)-2].Path); err != nil {
+		if pathManipulate(node.filename).IsSubFolder() {
+			if rootSolver, err = node.gClient.createNodeFolder(pathNodes[len(pathNodes)-2].Path()); err != nil {
 				return 0, err
 			}
 		}
 
-		if rootSolver, err = node.gClient.driveService.Files.Create(&drive.File{MimeType: "application/octet-stream", Name: pathNodes[len(pathNodes)-1].Name, Parents: []string{rootSolver.Id}}).Fields("*").Media(r).Do(); err != nil {
+		if rootSolver, err = node.gClient.driveService.Files.Create(&drive.File{MimeType: GoogleDriveMimeFile, Name: pathNodes[len(pathNodes)-1][1], Parents: []string{rootSolver.Id}}).Fields("*").Media(r).Do(); err != nil {
 			return 0, err
 		}
 		node.node = rootSolver // set new node
 	} else if node.node == nil && node.nodeRoot != nil {
-		if rootSolver, err = node.gClient.driveService.Files.Create(&drive.File{MimeType: "application/octet-stream", Name: pathNodes[len(pathNodes)-1].Name, Parents: []string{node.nodeRoot.Id}}).Fields("*").Media(r).Do(); err != nil {
+		if rootSolver, err = node.gClient.driveService.Files.Create(&drive.File{MimeType: GoogleDriveMimeFile, Name: pathNodes[len(pathNodes)-1][1], Parents: []string{node.nodeRoot.Id}}).Fields("*").Media(r).Do(); err != nil {
 			return 0, err
 		}
 		node.node = rootSolver // set new node
@@ -144,7 +140,7 @@ func (node *GdriveNode) ReadFrom(r io.Reader) (n int64, err error) {
 		return 0, err
 	}
 
-	node.gClient.cachePut(pathNodes[len(pathNodes)-1].Path, rootSolver)
+	node.gClient.cachePut(pathNodes[len(pathNodes)-1][0], rootSolver)
 	return rootSolver.Size, nil
 }
 
@@ -238,19 +234,19 @@ func (node *GdriveNode) Write(p []byte) (n int, err error) {
 		}
 	case DirectionWait:
 		node.direction = DirectionWrite
-		pathNodes := node.gClient.pathSplit(node.filename)
+		pathNodes := pathManipulate(node.filename).SplitPath()
 		nodeID := ""
 
 		if node.node == nil && node.nodeRoot == nil {
-			if node.gClient.checkMkdir(node.filename) {
-				if node.nodeRoot, err = node.gClient.mkdirAllNodes(pathNodes[len(pathNodes)-2].Path); err != nil {
+			if pathManipulate(node.filename).IsSubFolder() {
+				if node.nodeRoot, err = node.gClient.createNodeFolderRecursive(pathNodes[len(pathNodes)-2][0]); err != nil {
 					return 0, err
 				}
 			}
 		}
 		if node.node == nil {
 			node.sRead, node.sWrite = io.Pipe()
-			if node.node, err = node.gClient.driveService.Files.Create(&drive.File{MimeType: "application/octet-stream", Name: pathNodes[len(pathNodes)-1].Name, Parents: []string{node.nodeRoot.Id}}).Fields("*").Media(bytes.NewReader([]byte{})).Do(); err != nil {
+			if node.node, err = node.gClient.driveService.Files.Create(&drive.File{MimeType: GoogleDriveMimeFile, Name: pathNodes[len(pathNodes)-1][1], Parents: []string{node.nodeRoot.Id}}).Fields("*").Media(bytes.NewReader([]byte{})).Do(); err != nil {
 				return 0, err
 			}
 		}

@@ -2,13 +2,11 @@ package drivefs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"path"
-	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -25,6 +23,7 @@ const (
 	GoogleListQuery         string = "trashed=false and '%s' in parents"                 // Query files list
 	GoogleDriveMimeFolder   string = "application/vnd.google-apps.folder"                // Folder mime type
 	GoogleDriveMimeSyslink  string = "application/vnd.google-apps.shortcut"              // Syslink mime type
+	GoogleDriveMimeFile     string = "application/octet-stream"                          // File stream mime type
 )
 
 var (
@@ -51,14 +50,26 @@ var (
 	}
 )
 
-type Fs interface {
+// Generic interface with all implements to [io/fs]
+type FS interface {
 	fs.FS
 	fs.StatFS
 	fs.ReadDirFS
 	fs.ReadFileFS
 	fs.SubFS
+
+	// ReadLink returns the destination of the named symbolic link.
+	// If there is an error, it should be of type [*io/fs.PathError].
+	ReadLink(name string) (string, error)
+
+	// Lstat returns a [io/fs.FileInfo] describing the named file.
+	// If the file is a symbolic link, the returned [io/fs.FileInfo] describes the symbolic link.
+	// Lstat makes no attempt to follow the link.
+	// If there is an error, it should be of type [*io/fs.PathError].
+	Lstat(name string) (fs.FileInfo, error)
 }
 
+// Struct with implements [io/fs.FS]
 type Gdrive struct {
 	GoogleConfig *oauth2.Config `json:"client"` // Google client app oauth project
 	GoogleToken  *oauth2.Token  `json:"token"`  // Authenticated user
@@ -85,7 +96,7 @@ type GoogleOauthConfig struct {
 }
 
 // Create new Gdrive struct and configure google drive client
-func NewGoogleDrive(config GoogleOauthConfig) (Fs, error) {
+func NewGoogleDrive(config GoogleOauthConfig) (FS, error) {
 	// Make cache in memory if not set cache
 	if config.Cacher == nil {
 		config.Cacher = cache.NewMemory[*drive.File]()
@@ -124,13 +135,13 @@ func NewGoogleDrive(config GoogleOauthConfig) (Fs, error) {
 				return nil, fmt.Errorf("cannot get root: %v", err)
 			}
 			n = n[1:]
-		} else if gdrive.rootDrive, err = gdrive.mkdirAllNodes(strings.Join(n, "/")); err != nil {
+		} else if gdrive.rootDrive, err = gdrive.createNodeFolderRecursive(strings.Join(n, "/")); err != nil {
 			return nil, err
 		}
 
 		// resolve and create path not exists in new root
 		if len(n) >= 1 {
-			if gdrive.rootDrive, err = gdrive.mkdirAllNodes(strings.Join(n, "/")); err != nil {
+			if gdrive.rootDrive, err = gdrive.createNodeFolderRecursive(strings.Join(n, "/")); err != nil {
 				return nil, err
 			}
 		}
@@ -142,15 +153,15 @@ func NewGoogleDrive(config GoogleOauthConfig) (Fs, error) {
 }
 
 func (gdrive *Gdrive) cacheDelete(path string) {
-	gdrive.cache.Delete(fmt.Sprintf("gdrive:%q:%s", gdrive.fixPath(path), gdrive.rootDrive.Id))
+	gdrive.cache.Delete(fmt.Sprintf("gdrive:%q:%s", pathManipulate(path).CleanPath(), gdrive.rootDrive.Id))
 }
 
 func (gdrive *Gdrive) cachePut(path string, node *drive.File) {
-	gdrive.cache.Set(time.Hour, fmt.Sprintf("gdrive:%s:%s", gdrive.rootDrive.Id, gdrive.fixPath(path)), node)
+	gdrive.cache.Set(time.Hour, fmt.Sprintf("gdrive:%s:%s", gdrive.rootDrive.Id, pathManipulate(path).CleanPath()), node)
 }
 
 func (gdrive *Gdrive) cacheGet(path string) *drive.File {
-	if node, err := gdrive.cache.Get(fmt.Sprintf("gdrive:%s:%s", gdrive.rootDrive.Id, gdrive.fixPath(path))); err == nil && node != nil {
+	if node, err := gdrive.cache.Get(fmt.Sprintf("gdrive:%s:%s", gdrive.rootDrive.Id, pathManipulate(path).CleanPath())); err == nil && node != nil {
 		return node
 	}
 	return nil
@@ -158,14 +169,10 @@ func (gdrive *Gdrive) cacheGet(path string) *drive.File {
 
 // Get Node info and is not trashed/deleted
 func (gdrive *Gdrive) resolveNode(folderID, name string) (*drive.File, error) {
-	if name == "." || name == "/" {
-		return gdrive.rootDrive, nil
-	}
-
 	name = strings.ReplaceAll(strings.ReplaceAll(name, `\`, `\\`), `'`, `\'`)
 	file, err := gdrive.driveService.Files.List().Fields("*").PageSize(300).Q(fmt.Sprintf(GoogleListQueryWithName, folderID, name)).Do()
 	if err != nil {
-		return nil, err
+		return nil, ProcessErr(nil, err)
 	}
 
 	if len(file.Files) != 1 {
@@ -177,13 +184,12 @@ func (gdrive *Gdrive) resolveNode(folderID, name string) (*drive.File, error) {
 }
 
 // List all files in folder
-func (gdrive *Gdrive) listNodes(folderID string) ([]*drive.File, error) {
-	folderGdrive := gdrive.driveService.Files.List().Fields("*").Q(fmt.Sprintf(GoogleListQuery, folderID)).PageSize(1000)
-	nodes := []*drive.File{}
+func (gdrive *Gdrive) listFiles(folderID string) ([]*drive.File, error) {
+	folder, nodes := gdrive.driveService.Files.List().Fields("*").Q(fmt.Sprintf(GoogleListQuery, folderID)).PageSize(1000), []*drive.File{}
 	for {
-		res, err := folderGdrive.Do()
+		res, err := folder.Do()
 		if err != nil {
-			return nodes, err
+			return nodes, ProcessErr(nil, err)
 		}
 
 		for nodeIndex := range res.Files {
@@ -192,39 +198,11 @@ func (gdrive *Gdrive) listNodes(folderID string) ([]*drive.File, error) {
 			}
 		}
 
-		if folderGdrive.PageToken(res.NextPageToken); res.NextPageToken == "" {
+		if folder.PageToken(res.NextPageToken); res.NextPageToken == "" {
 			break
 		}
 	}
 	return nodes, nil
-}
-
-// Split to nodes
-func (*Gdrive) pathSplit(path string) []struct{ Name, Path string } {
-	path = strings.Trim(filepath.ToSlash(path), "/")
-
-	var nodes []struct{ Name, Path string }
-	lastNode := 0
-	for indexStr := range path {
-		if path[indexStr] == '/' {
-			nodes = append(nodes, struct{ Name, Path string }{path[lastNode:indexStr], path[0:indexStr]})
-			lastNode = indexStr + 1
-		}
-	}
-	nodes = append(nodes, struct{ Name, Path string }{path[lastNode:], path})
-	return nodes
-}
-
-// Check if path have sub-folders
-func (gdrive *Gdrive) checkMkdir(path string) bool { return len(gdrive.pathSplit(path)) > 1 }
-
-// pretty path
-func (gdrive *Gdrive) fixPath(path string) string { return gdrive.getLast(path).Path }
-
-// pretty path and return last element
-func (gdrive *Gdrive) getLast(path string) struct{ Name, Path string } {
-	n := gdrive.pathSplit(path)
-	return n[len(n)-1]
 }
 
 // Resolve node path from last node to fist/root path
@@ -281,66 +259,132 @@ func (gdrive *Gdrive) forwardPathResove(nodeID string) (string, error) {
 }
 
 // Get *drive.File if exist
-func (gdrive *Gdrive) getNode(path string) (*drive.File, error) {
+func (gdrive *Gdrive) getNode(name string) (*drive.File, error) {
+	if pathManipulate(name).IsRoot() {
+		return gdrive.rootDrive, nil
+	}
+
 	var current *drive.File
-	if current = gdrive.cacheGet(gdrive.fixPath(path)); current != nil {
+	if current = gdrive.cacheGet(name); current != nil {
 		return current, nil
 	}
 
-	current = gdrive.rootDrive      // root
-	nodes := gdrive.pathSplit(path) // split node
+	current = gdrive.rootDrive                // root
+	nodes := pathManipulate(name).SplitPath() // split node
 	for _, currentNode := range nodes {
 		previus := current // storage previus Node
-		if current = gdrive.cacheGet(currentNode.Path); current != nil {
+		if current = gdrive.cacheGet(currentNode[0]); current != nil {
 			continue // continue to next node
 		}
 
 		var err error
 		// Check if ared exist in folder
-		if current, err = gdrive.resolveNode(previus.Id, currentNode.Name); err != nil {
+		if current, err = gdrive.resolveNode(previus.Id, currentNode[1]); err != nil {
 			return nil, err // return drive error
 		}
-		gdrive.cachePut(currentNode.Path, current)
+		gdrive.cachePut(currentNode[0], current)
 	}
 	return current, nil
-}
-
-// Resolve node path and return New Gdrive struct
-func (gdrive *Gdrive) Sub(dir string) (fs.FS, error) {
-	node, err := gdrive.resolveNode(gdrive.rootDrive.Id, dir)
-	if err != nil {
-		return nil, err
-	}
-
-	// Return New gdrive struct
-	return &Gdrive{
-		cache:        gdrive.cache,
-		driveService: gdrive.driveService,
-		GoogleConfig: gdrive.GoogleConfig,
-		GoogleToken:  gdrive.GoogleToken,
-		rootDrive:    node,
-	}, nil
 }
 
 // Get file stream, if error check if is http2 error to make new request
 func (gdrive *Gdrive) getRequest(node *drive.FilesGetCall) (*http.Response, error) {
 	node.AcknowledgeAbuse(true)
 	res, err := node.Download()
-	for i := 0; i < 10 && err != nil; i++ {
-		if res != nil && res.StatusCode == http.StatusTooManyRequests {
-			<-time.After(time.Minute) // Wait minutes to reset www.google.com/sorry/index
+	for i := 0; i < 3 && err != nil; i++ {
+		err = ProcessErr(res, err)
+		switch err {
+		case fs.ErrNotExist:
+			return nil, err
+		case fs.ErrPermission:
+			<-time.After(time.Microsecond * 2) // Wait seconds to retry download, to google server close connection
 			res, err = node.Download()
-			continue
-		}
-
-		if urlError, ok := err.(*url.Error); ok {
-			if _, ok := urlError.Err.(http2.GoAwayError); ok || reflect.TypeOf(urlError.Err).String() == "http.http2GoAwayError" {
+		default:
+			switch v := err.(type) {
+			case http2.GoAwayError:
 				<-time.After(time.Microsecond * 2) // Wait seconds to retry download, to google server close connection
 				res, err = node.Download()
-				continue
+			default:
+				return res, v
 			}
 		}
-		break
 	}
 	return res, err
+}
+
+func (gdrive *Gdrive) createNodeFolder(path string) (folderNode *drive.File, err error) {
+	if cacheNode := gdrive.cacheGet(path); cacheNode != nil {
+		return cacheNode, nil
+	}
+
+	nodes := pathManipulate(path).SplitPath()
+	previusNode, lastNode := nodes.At(-2), nodes.At(-1)
+
+	if folderNode = gdrive.cacheGet(previusNode.Path()); folderNode == nil {
+		if folderNode, err = gdrive.resolveNode(gdrive.rootDrive.Id, previusNode.Path()); err != nil {
+			return
+		}
+		gdrive.cachePut(previusNode.Path(), folderNode)
+	}
+
+	previus := folderNode
+	if folderNode, err = gdrive.resolveNode(gdrive.rootDrive.Id, lastNode.Path()); err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, err // return drive error
+		}
+
+		nodeCreate := &drive.File{
+			Name:     lastNode.Name(),       // Folder name
+			MimeType: GoogleDriveMimeFolder, // folder mime
+			Parents:  []string{previus.Id},  // previus to folder to create
+		}
+
+		if folderNode, err = gdrive.driveService.Files.Create(nodeCreate).Fields("*").Do(); err != nil {
+			return nil, ProcessErr(nil, err)
+		}
+	}
+	gdrive.cachePut(lastNode.Path(), folderNode)
+	return
+}
+
+// Create recursive directory if not exists
+func (gdrive *Gdrive) createNodeFolderRecursive(path string) (*drive.File, error) {
+	if cacheNode := gdrive.cacheGet(path); cacheNode != nil {
+		return cacheNode, nil
+	}
+
+	current, err, seq := gdrive.rootDrive, error(nil), pathManipulate(path).SplitPathSeq()
+	for folderPath := range seq {
+		previus := current // storage previus Node
+		if current = gdrive.cacheGet(folderPath); current != nil {
+			continue // continue to next node
+		} else if current, err = gdrive.resolveNode(previus.Id, folderPath); err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				return nil, err // return drive error
+			}
+
+			// Base to create folder
+			nodeCreate := &drive.File{
+				MimeType: GoogleDriveMimeFolder, // folder mime
+				Parents:  []string{previus.Id},  // previus to folder to create
+			}
+
+			// Create recursive folder
+			for folderPath, name := range seq {
+				nodeCreate.Name = name // folder name
+				if current, err = gdrive.driveService.Files.Create(nodeCreate).Fields("*").Do(); err != nil {
+					return nil, ProcessErr(nil, err)
+				}
+
+				gdrive.cachePut(folderPath, current) // Cache folder path
+				nodeCreate.Parents[0] = current.Id   // Set new root
+			}
+			// Break loop and return current node
+			break
+		}
+
+		// cache folder if not seted in cache
+		gdrive.cachePut(folderPath, current)
+	}
+	return current, nil
 }

@@ -29,53 +29,30 @@ func (gdrive *Gdrive) Remove(name string) error {
 	return gdrive.driveService.Files.Delete(fileNode.Id).Do()
 }
 
-// Create recursive directory if not exists
-func (gdrive *Gdrive) mkdirAllNodes(path string) (*drive.File, error) {
-	var current *drive.File
-	if current = gdrive.cacheGet(gdrive.fixPath(path)); current != nil {
-		return current, nil
+// Resolve node path and return New Gdrive struct
+func (gdrive *Gdrive) Sub(dir string) (fs.FS, error) {
+	node, err := gdrive.resolveNode(gdrive.rootDrive.Id, dir)
+	if err != nil {
+		return nil, err
 	}
 
-	current = gdrive.rootDrive      // root
-	nodes := gdrive.pathSplit(path) // split node
-	for nodeIndex, currentNode := range nodes {
-		previus := current // storage previus Node
-		if current = gdrive.cacheGet(currentNode.Path); current != nil {
-			continue // continue to next node
-		}
+	// Return New gdrive struct
+	return &Gdrive{
+		cache:        gdrive.cache,
+		driveService: gdrive.driveService,
+		GoogleConfig: gdrive.GoogleConfig,
+		GoogleToken:  gdrive.GoogleToken,
+		rootDrive:    node,
+	}, nil
+}
 
-		var err error
-		// Check if ared exist in folder
-		if current, err = gdrive.resolveNode(previus.Id, currentNode.Name); err != nil {
-			if err != fs.ErrNotExist {
-				return nil, err // return drive error
-			}
-
-			// Base to create folder
-			var folderCreate drive.File
-			folderCreate.MimeType = GoogleDriveMimeFolder // folder mime
-			folderCreate.Parents = []string{previus.Id}   // previus to folder to create
-
-			// Create recursive folder
-			for _, currentNode = range nodes[nodeIndex:] {
-				folderCreate.Name = currentNode.Name // folder name
-				if current, err = gdrive.driveService.Files.Create(&folderCreate).Fields("*").Do(); err != nil {
-					return nil, err
-				}
-				gdrive.cachePut(currentNode.Path, current)
-				folderCreate.Parents[0] = current.Id // Set new root
-			}
-
-			// return new folder
-			return current, nil
-		}
-		gdrive.cachePut(currentNode.Path, current)
-	}
-	return current, nil
+func (gdrive *Gdrive) Mkdir(name string) (err error) {
+	_, err = gdrive.createNodeFolder(name)
+	return
 }
 
 func (gdrive *Gdrive) MkdirAll(name string) (err error) {
-	_, err = gdrive.mkdirAllNodes(name)
+	_, err = gdrive.createNodeFolderRecursive(name)
 	return
 }
 
@@ -91,36 +68,36 @@ func (gdrive *Gdrive) Save(name string, r io.Reader) (int64, error) {
 	return io.Copy(f, r)
 }
 
-// Create file if not exists
-func (gdrive *Gdrive) Create(name string) (file File, err error) {
-	node := (*drive.File)(nil)
-	if stat, err2 := gdrive.Stat(name); err2 == nil {
-		node = stat.(*Stat).File
-	} else if gdrive.checkMkdir(name) {
-		pathNodes := gdrive.pathSplit(name)
-		if node, err = gdrive.mkdirAllNodes(pathNodes[len(pathNodes)-2].Path); err != nil {
-			return
-		}
-		file = &GdriveNode{filename: name, gClient: gdrive, nodeRoot: node, direction: DirectionWrite}
-		return
-	}
-
-	if node == nil {
-		file = &GdriveNode{filename: name, gClient: gdrive, node: nil, direction: DirectionWrite}
-		return
-	} else if node.MimeType == GoogleDriveMimeFolder {
-		nodes, err := gdrive.listNodes(node.Id)
-		if err != nil {
+// Create file if not exists, if exists delete and recreate
+func (gdrive *Gdrive) Create(name string) (File, error) {
+	if stat, err := gdrive.Stat(name); err == nil {
+		node := stat.(*Stat).File
+		if node.MimeType == GoogleDriveMimeFolder {
+			return nil, fs.ErrInvalid
+		} else if err = gdrive.driveService.Files.Delete(node.Id).Do(); err != nil {
 			return nil, err
 		}
-
-		nodeFiles := []fs.DirEntry{}
-		for _, node := range nodes {
-			nodeFiles = append(nodeFiles, fs.FileInfoToDirEntry(&Stat{File: node}))
-		}
-		return &GdriveNode{filename: name, gClient: gdrive, node: node, nodeFiles: nodeFiles, filesOffset: 0, direction: DirectionWrite}, nil
 	}
 
-	file = &GdriveNode{filename: name, gClient: gdrive, node: node, direction: DirectionWrite}
-	return
+	pathNodes := pathManipulate(name).SplitPath()
+	rootFolder, err := gdrive.getNode(pathNodes.At(-2).Path())
+	if err != nil {
+		return nil, err
+	}
+
+	fileNode, err := gdrive.driveService.Files.Create(&drive.File{
+		MimeType: GoogleDriveMimeFile,     // File stream mime
+		Name:     pathNodes.At(-1).Name(), // Folder name
+		Parents:  []string{rootFolder.Id}, // previus to folder to create
+	}).Fields("*").Do()
+	if err != nil {
+		return nil, ProcessErr(nil, err)
+	}
+
+	return &GdriveNode{
+		filename: pathManipulate(fileNode.Name).EscapeName(),
+		gClient:  gdrive,
+		node:     fileNode,
+		nodeRoot: rootFolder,
+	}, nil
 }

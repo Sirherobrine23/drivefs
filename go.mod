@@ -3,6 +3,7 @@ module sirherobrine23.com.br/Sirherobrine23/drivefs
 go 1.24
 
 require (
+	github.com/googleapis/gax-go/v2 v2.14.1
 	github.com/valkey-io/valkey-go v1.0.56
 	golang.org/x/net v0.37.0
 	golang.org/x/oauth2 v0.28.0
@@ -21,7 +22,6 @@ require (
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.5 // indirect
-	github.com/googleapis/gax-go/v2 v2.14.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

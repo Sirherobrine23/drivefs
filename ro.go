@@ -55,7 +55,7 @@ func (gdrive *Gdrive) ReadDir(name string) ([]fs.DirEntry, error) {
 		return nil, err
 	}
 
-	nodes, err := gdrive.listNodes(current.Id)
+	nodes, err := gdrive.listFiles(current.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,7 @@ func (gdrive *Gdrive) Open(name string) (fs.File, error) {
 	}
 
 	if node.MimeType == GoogleDriveMimeFolder {
-		nodes, err := gdrive.listNodes(node.Id)
+		nodes, err := gdrive.listFiles(node.Id)
 		if err != nil {
 			return nil, err
 		}
