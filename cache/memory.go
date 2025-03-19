@@ -43,7 +43,7 @@ func (mem *Memory[T]) Get(key string) (value T, err error) {
 	return
 }
 
-func (mem *Memory[T]) Values() iter.Seq2[string, T] {
+func (mem *Memory[T]) Values() (iter.Seq2[string, T], error) {
 	return func(yield func(string, T) bool) {
 		mem.locker.RLock()
 		defer mem.locker.RUnlock()
@@ -55,7 +55,7 @@ func (mem *Memory[T]) Values() iter.Seq2[string, T] {
 				return
 			}
 		}
-	}
+	}, nil
 }
 
 func (mem *Memory[T]) Flush() error {

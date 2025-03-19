@@ -14,11 +14,11 @@ var (
 
 // Generic Cache interface
 type Cache[T any] interface {
+	Flush() error                                     // Remove all outdated values
 	Delete(key string) error                          // Remove value from cache
 	Set(ttl time.Duration, key string, value T) error // set new value or replace current value
 	Get(key string) (T, error)                        // Get current value
-	Values() iter.Seq2[string, T]                     // List all keys with u values
-	Flush() error                                     // Remove all outdated values
+	Values() (iter.Seq2[string, T], error)            // List all keys with u values
 }
 
 func ToString(v any) (string, error) {
@@ -59,7 +59,7 @@ func FromString[T any](value string) (target T, err error) {
 	case json.Unmarshaler:
 		err = v.UnmarshalJSON([]byte(value))
 	default:
-		err = json.Unmarshal([]byte(value), &value)
+		err = json.Unmarshal([]byte(value), &target)
 	}
 	return
 }

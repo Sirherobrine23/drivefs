@@ -20,8 +20,8 @@ func NewValkey[T any](opt valkey.ClientOption) (Cache[T], error) {
 	return Valkey[T]{Client: client}, nil
 }
 
-func (valkey Valkey[T]) Flush() error                 { return nil }
-func (valkey Valkey[T]) Values() iter.Seq2[string, T] { return nil }
+func (valkey Valkey[T]) Flush() error                          { return nil }
+func (valkey Valkey[T]) Values() (iter.Seq2[string, T], error) { return nil, nil }
 
 func (valkey Valkey[T]) Delete(key string) error {
 	return valkey.Client.Do(context.Background(), valkey.Client.B().Del().Key(key).Build()).Error()

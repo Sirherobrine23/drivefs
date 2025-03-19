@@ -14,7 +14,7 @@ type Value struct {
 }
 
 func TestDbSqlite(t *testing.T) {
-	cache, err := NewOpenDB[Value]("sqlite", "../cache_test.db", "cache")
+	cache, err := OpenSqlite[Value]("../cache_test.db", "cache")
 	if err != nil {
 		t.Skip(err)
 		return
