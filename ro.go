@@ -7,7 +7,7 @@ import (
 	"google.golang.org/api/drive/v3"
 )
 
-func (gdrive *Gdrive) ReadLink(name string) (string, error) {
+func (gdrive *GdriveFS) ReadLink(name string) (string, error) {
 	fileNode, err := gdrive.getNode(name)
 	if err != nil {
 		return "", err
@@ -23,7 +23,7 @@ func (gdrive *Gdrive) ReadLink(name string) (string, error) {
 	return gdrive.forwardPathResove(fileNode.Id)
 }
 
-func (gdrive *Gdrive) Lstat(name string) (fs.FileInfo, error) {
+func (gdrive *GdriveFS) Lstat(name string) (fs.FileInfo, error) {
 	fileNode, err := gdrive.getNode(name)
 	if err != nil {
 		return nil, err
@@ -32,7 +32,7 @@ func (gdrive *Gdrive) Lstat(name string) (fs.FileInfo, error) {
 }
 
 // Resolve path and return File or Folder Stat
-func (gdrive *Gdrive) Stat(path string) (fs.FileInfo, error) {
+func (gdrive *GdriveFS) Stat(path string) (fs.FileInfo, error) {
 	fileNode, err := gdrive.getNode(path)
 	if err != nil {
 		return nil, err
@@ -49,7 +49,7 @@ func (gdrive *Gdrive) Stat(path string) (fs.FileInfo, error) {
 }
 
 // List files and folder in Directory
-func (gdrive *Gdrive) ReadDir(name string) ([]fs.DirEntry, error) {
+func (gdrive *GdriveFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	current, err := (*drive.File)(nil), error(nil)
 	if current, err = gdrive.getNode(name); err != nil {
 		return nil, err
@@ -69,7 +69,7 @@ func (gdrive *Gdrive) ReadDir(name string) ([]fs.DirEntry, error) {
 }
 
 // resolve path and return File stream
-func (gdrive *Gdrive) Open(name string) (fs.File, error) {
+func (gdrive *GdriveFS) Open(name string) (fs.File, error) {
 	node, err := gdrive.getNode(name)
 	if err != nil {
 		return nil, err
@@ -102,7 +102,7 @@ func (gdrive *Gdrive) Open(name string) (fs.File, error) {
 	}, nil
 }
 
-func (gdrive Gdrive) ReadFile(name string) ([]byte, error) {
+func (gdrive GdriveFS) ReadFile(name string) ([]byte, error) {
 	file, err := gdrive.Open(name)
 	if err != nil {
 		return nil, err

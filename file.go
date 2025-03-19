@@ -83,7 +83,7 @@ func (err ErrInvalidDirection) Error() string {
 // Struct with file or directory info
 type GdriveNode struct {
 	filename  string         // Filename path
-	gClient   *Gdrive        // Client setuped
+	gClient   *GdriveFS      // Client setuped
 	node      *drive.File    // File node
 	nodeRoot  *drive.File    // root to create file
 	sRead     *io.PipeReader // Pipe reader

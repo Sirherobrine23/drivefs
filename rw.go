@@ -10,17 +10,17 @@ import (
 // Delete file from google drive
 //
 // Deprecated: use [sirherobrine23.com.br/Sirherobrine23/drivefs.Gdrive.Remove]
-func (gdrive *Gdrive) Delete(name string) error {
+func (gdrive *GdriveFS) Delete(name string) error {
 	return gdrive.Remove(name)
 }
 
 // Link to [sirherobrine23.com.br/Sirherobrine23/drivefs.Gdrive.Remove]
-func (gdrive *Gdrive) RemoveAll(name string) error {
+func (gdrive *GdriveFS) RemoveAll(name string) error {
 	return gdrive.Remove(name)
 }
 
 // Delete file from google drive if is folder delete recursive
-func (gdrive *Gdrive) Remove(name string) error {
+func (gdrive *GdriveFS) Remove(name string) error {
 	fileNode, err := gdrive.getNode(name)
 	if err != nil {
 		return err
@@ -30,14 +30,14 @@ func (gdrive *Gdrive) Remove(name string) error {
 }
 
 // Resolve node path and return New Gdrive struct
-func (gdrive *Gdrive) Sub(dir string) (fs.FS, error) {
+func (gdrive *GdriveFS) Sub(dir string) (fs.FS, error) {
 	node, err := gdrive.resolveNode(gdrive.rootDrive.Id, dir)
 	if err != nil {
 		return nil, err
 	}
 
 	// Return New gdrive struct
-	return &Gdrive{
+	return &GdriveFS{
 		cache:        gdrive.cache,
 		driveService: gdrive.driveService,
 		GoogleConfig: gdrive.GoogleConfig,
@@ -46,12 +46,12 @@ func (gdrive *Gdrive) Sub(dir string) (fs.FS, error) {
 	}, nil
 }
 
-func (gdrive *Gdrive) Mkdir(name string) (err error) {
+func (gdrive *GdriveFS) Mkdir(name string) (err error) {
 	_, err = gdrive.createNodeFolder(name)
 	return
 }
 
-func (gdrive *Gdrive) MkdirAll(name string) (err error) {
+func (gdrive *GdriveFS) MkdirAll(name string) (err error) {
 	_, err = gdrive.createNodeFolderRecursive(name)
 	return
 }
@@ -59,7 +59,7 @@ func (gdrive *Gdrive) MkdirAll(name string) (err error) {
 // Save file in path, if folder not exists create
 //
 // Deprecated: use [sirherobrine23.com.br/Sirherobrine23/drivefs.Create]
-func (gdrive *Gdrive) Save(name string, r io.Reader) (int64, error) {
+func (gdrive *GdriveFS) Save(name string, r io.Reader) (int64, error) {
 	f, err := gdrive.Create(name)
 	if err != nil {
 		return 0, err
@@ -69,7 +69,7 @@ func (gdrive *Gdrive) Save(name string, r io.Reader) (int64, error) {
 }
 
 // Create file if not exists, if exists delete and recreate
-func (gdrive *Gdrive) Create(name string) (File, error) {
+func (gdrive *GdriveFS) Create(name string) (File, error) {
 	if stat, err := gdrive.Stat(name); err == nil {
 		node := stat.(*Stat).File
 		if node.MimeType == GoogleDriveMimeFolder {
