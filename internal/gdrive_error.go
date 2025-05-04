@@ -1,6 +1,7 @@
 package drivefs
 
 import (
+	"errors"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -9,6 +10,11 @@ import (
 	"github.com/googleapis/gax-go/v2/apierror"
 	"golang.org/x/net/http2"
 	"google.golang.org/api/googleapi"
+)
+
+var (
+	ErrHttp2 = errors.New("http2 error")
+	ErrQuota = errors.New("api quota limit")
 )
 
 func ProcessErr(res *http.Response, err error) error {
@@ -23,20 +29,22 @@ func ProcessErr(res *http.Response, err error) error {
 
 	urlErr := (*url.Error)(nil)
 	switch v := err.(type) {
+	case *http2.GoAwayError:
+		return ErrHttp2
 	case *url.Error:
 		urlErr = v
 		err = v.Err
 	case *apierror.APIError:
 		details := v.Details()
 		if details.QuotaFailure != nil {
-			return fs.ErrPermission
+			return ErrQuota
 		}
 
 		switch v.HTTPCode() {
 		case http.StatusNotFound:
 			return fs.ErrNotExist
 		case http.StatusTooManyRequests:
-			return fs.ErrPermission
+			return ErrQuota
 		}
 
 		err = v.Unwrap()
@@ -45,7 +53,7 @@ func ProcessErr(res *http.Response, err error) error {
 		case http.StatusNotFound:
 			return fs.ErrNotExist
 		case http.StatusTooManyRequests:
-			return fs.ErrPermission
+			return ErrQuota
 		}
 		err = v.Unwrap()
 	}

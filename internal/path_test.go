@@ -3,7 +3,7 @@ package drivefs
 import "testing"
 
 func TestPath(t *testing.T) {
-	m := pathManipulate("/google/test/23/")
+	m := GdrivePath("/google/test/23/")
 	if len(m.SplitPath()) != 3 {
 		t.Errorf("invalid Path spliter: %+v != %+v", m.CleanPath(), [][2]string{{"google", "google"}, {"google/test", "test"}, {"google/test/23", "23"}})
 		t.FailNow()
@@ -17,7 +17,7 @@ func TestPath(t *testing.T) {
 		t.FailNow()
 	}
 
-	m = pathManipulate("\\google\\test\\23\\")
+	m = GdrivePath("\\google\\test\\23\\")
 	if len(m.SplitPath()) != 3 {
 		t.Errorf("invalid Path spliter: %+v != %+v", m.CleanPath(), [][2]string{{"google", "google"}, {"google/test", "test"}, {"google/test/23", "23"}})
 		t.FailNow()
@@ -31,7 +31,7 @@ func TestPath(t *testing.T) {
 		t.FailNow()
 	}
 
-	m = pathManipulate("\\\\google\\\\test\\\\23\\\\")
+	m = GdrivePath("\\\\google\\\\test\\\\23\\\\")
 	if len(m.SplitPath()) != 3 {
 		t.Errorf("invalid Path spliter: %+v != %+v", m.CleanPath(), [][2]string{{"google", "google"}, {"google/test", "test"}, {"google/test/23", "23"}})
 		t.FailNow()
