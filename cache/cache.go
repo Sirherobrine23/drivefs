@@ -4,6 +4,8 @@ import (
 	"encoding"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"iter"
 	"time"
 )
@@ -62,4 +64,18 @@ func FromString[T any](value string) (target T, err error) {
 		err = json.Unmarshal([]byte(value), &target)
 	}
 	return
+}
+
+func PrintCache[T any](w io.Writer, cache Cache[T]) error {
+	values, err := cache.Values()
+	if err != nil {
+		return err
+	}
+
+	for key, value := range values {
+		if _, err := fmt.Fprintf(w, "Cache key: %s, value: %+v\n", key, value); err != nil {
+			return err
+		}
+	}
+	return nil
 }

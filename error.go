@@ -11,9 +11,10 @@ import (
 	"google.golang.org/api/googleapi"
 )
 
-func ProcessErr(res *http.Response, err error) error {
+// Process response error and return equivalent to fs or os error
+func ProcessErr(res *googleapi.ServerResponse, err error) error {
 	if res != nil {
-		switch res.StatusCode {
+		switch res.HTTPStatusCode {
 		case http.StatusNotFound:
 			return fs.ErrNotExist
 		case http.StatusTooManyRequests:
