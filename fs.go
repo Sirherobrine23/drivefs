@@ -12,7 +12,7 @@ import (
 
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/googleapi"
-	"sirherobrine23.com.br/Sirherobrine23/cgofuse/fuse/utils"
+	"sirherobrine23.com.br/Sirherobrine23/cgofuse/fuse/calls"
 )
 
 func httpRes(res *http.Response) *googleapi.ServerResponse {
@@ -229,13 +229,13 @@ func (gdrive *Gdrive) OpenFile(name string, flag int, perm fs.FileMode) (_ File,
 	name = pathManipulate(name).CleanPath()
 
 	// Ignore Read+Write open
-	if utils.CheckFlags(flag, os.O_RDWR) {
+	if calls.OpenFlags(flag).Includes(os.O_RDWR) {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
 	}
 
 	var driveNode *drive.File
 	if driveNode, err = gdrive.getNode(name); err != nil {
-		if errors.Is(err, fs.ErrNotExist) && !utils.CheckFlags(flag, os.O_CREATE) {
+		if errors.Is(err, fs.ErrNotExist) && !calls.OpenFlags(flag).Includes(flag, os.O_CREATE) {
 			err = ProcessErr(fileRes(driveNode), err)
 			return
 		}
@@ -249,7 +249,7 @@ func (gdrive *Gdrive) OpenFile(name string, flag int, perm fs.FileMode) (_ File,
 		fileMake.Parents = []string{parentRoot.Id}
 		fileMake.Name = path.Base(name)
 
-		if utils.CheckFlags(flag, syscall.S_IFDIR, syscall.S_IFDIR, int(fs.ModeDir)) {
+		if calls.OpenFlags(flag).Includes(flag, syscall.S_IFDIR, syscall.S_IFDIR, int(fs.ModeDir)) {
 			fileMake.MimeType = GoogleDriveMimeFolder
 		} else {
 			fileMake.MimeType = GoogleDriveMimeFile
@@ -284,9 +284,8 @@ func (gdrive *Gdrive) OpenFile(name string, flag int, perm fs.FileMode) (_ File,
 		Offset: 0,
 	}
 
-	if utils.ContainsFlags(flag, syscall.O_RDWR, syscall.O_WRONLY, syscall.O_CREAT, syscall.O_TRUNC) {
+	if calls.OpenFlags(flag).Includes(syscall.O_RDWR, syscall.O_WRONLY, syscall.O_CREAT, syscall.O_TRUNC) {
 		fipe.Reader, fipe.Writer = io.Pipe()
-
 	} else {
 		res, err := openFileAPI(gdrive.driveService.Files.Get(driveNode.Id))
 		if err != nil {

@@ -17,8 +17,14 @@ func ProcessErr(res *googleapi.ServerResponse, err error) error {
 		switch res.HTTPStatusCode {
 		case http.StatusNotFound:
 			return fs.ErrNotExist
-		case http.StatusTooManyRequests:
+		case http.StatusBadRequest, http.StatusForbidden:
+			return fs.ErrInvalid
+		case http.StatusTooManyRequests, http.StatusUnauthorized:
 			return fs.ErrPermission
+		case http.StatusInternalServerError:
+			return fs.ErrInvalid
+		case http.StatusConflict:
+			return fs.ErrExist
 		}
 	}
 
@@ -28,36 +34,21 @@ func ProcessErr(res *googleapi.ServerResponse, err error) error {
 		urlErr = v
 		err = v.Err
 	case *apierror.APIError:
-		details := v.Details()
-		if details.QuotaFailure != nil {
+		if details := v.Details(); details.QuotaFailure != nil {
 			return fs.ErrPermission
 		}
-
-		switch v.HTTPCode() {
-		case http.StatusNotFound:
-			return fs.ErrNotExist
-		case http.StatusTooManyRequests:
-			return fs.ErrPermission
-		}
-
-		err = v.Unwrap()
+		return ProcessErr(&googleapi.ServerResponse{HTTPStatusCode: v.HTTPCode(), Header: nil}, v.Unwrap())
 	case *googleapi.Error:
-		switch v.Code {
-		case http.StatusNotFound:
-			return fs.ErrNotExist
-		case http.StatusTooManyRequests:
-			return fs.ErrPermission
-		}
-		err = v.Unwrap()
+		return ProcessErr(&googleapi.ServerResponse{HTTPStatusCode: v.Code, Header: v.Header}, v.Unwrap())
 	}
 
 	valueOf := reflect.ValueOf(err)
 	switch valueOf.Type().String() {
 	case "http.http2GoAwayError", "http2.GoAwayError":
 		return &http2.GoAwayError{
-			DebugData:    valueOf.FieldByName("DebugData").String(),
-			ErrCode:      http2.ErrCode(uint32(valueOf.FieldByName("ErrCode").Uint())),
 			LastStreamID: uint32(valueOf.FieldByName("LastStreamID").Uint()),
+			ErrCode:      http2.ErrCode(valueOf.FieldByName("ErrCode").Uint()),
+			DebugData:    valueOf.FieldByName("DebugData").String(),
 		}
 	default:
 		if urlErr != nil {

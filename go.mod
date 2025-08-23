@@ -9,7 +9,7 @@ require (
 	golang.org/x/oauth2 v0.30.0
 	google.golang.org/api v0.246.0
 	modernc.org/sqlite v1.36.1
-	sirherobrine23.com.br/Sirherobrine23/cgofuse v1.7.8
+	sirherobrine23.com.br/Sirherobrine23/cgofuse v1.8.0
 )
 
 require (

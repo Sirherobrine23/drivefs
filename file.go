@@ -8,7 +8,6 @@ import (
 	"os"
 	"path"
 	"strconv"
-	"sync"
 	"syscall"
 	"time"
 
@@ -87,7 +86,6 @@ type FileNode struct {
 	Writer io.WriteCloser
 	Reader io.ReadCloser
 	Client *Gdrive
-	Locker *sync.Mutex
 
 	Offset int64 // Offset
 }
@@ -216,17 +214,11 @@ func (file *FileNode) ReadAt(p []byte, off int64) (n int, err error) {
 
 	switch min(1, max(-1, file.Offset-off)) {
 	case 1: // Discart next reader
-		file.Locker.Lock()
-		defer file.Locker.Unlock()
-
 		if _, err = io.CopyN(io.Discard, file.Reader, file.Offset-off); err != nil {
 			return 0, ProcessErr(nil, err)
 		}
 		file.Offset = off
 	case -1: // Restart body reader
-		file.Locker.Lock()
-		defer file.Locker.Unlock()
-
 		// Set current offset off file
 		reopenFile := file.Client.driveService.Files.Get(file.Node.Id)
 		reopenFile.Header().Set("Range", fmt.Sprintf("bytes=%d-", off))
